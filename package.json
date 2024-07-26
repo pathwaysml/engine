@@ -1,0 +1,40 @@
+{
+  "name": "@pathwaysml/engine",
+  "author": {
+    "name": "Pathways",
+    "url": "https://pathways.spongeass.dev"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "contributors": [
+    {
+      "name": "SpongeAss",
+      "url": "https://github.com/spongedsc"
+    }
+  ],
+  "scripts": {
+    "run:api": "bun run apps/api/src/index.ts",
+    "run:core": "bun run apps/core/src/index.ts"
+  },
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "dependencies": {
+    "@langchain/community": "^0.2.20",
+    "@langchain/core": "^0.2.18",
+    "@langchain/ollama": "^0.0.2",
+    "@langchain/openai": "^0.2.5",
+    "chalk": "^5.3.0",
+    "elysia": "^1.1.4",
+    "elysia-autoroutes": "^0.5.0",
+    "ioredis": "^5.4.1",
+    "langchain": "^0.2.11",
+    "nanoid": "^5.0.7"
+  }
+}
