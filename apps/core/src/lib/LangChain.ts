@@ -1,29 +1,52 @@
 import type { ChatOpenAI } from "@langchain/openai";
-import type { ElysiaApp } from "../index.ts";
-import { providers } from "./globals.ts";
+import { config, IORedis, providers } from "./globals.ts";
 import type { ChatOllama } from "@langchain/ollama";
 import { RedisByteStore } from "@langchain/community/storage/ioredis";
 import type { Redis } from "ioredis";
+import { HumanMessage, AIMessage, FunctionMessage, RemoveMessage, SystemMessage, ToolMessage, AIMessageChunk } from "@langchain/core/messages";
+import { nanoid } from "nanoid";
+import { IntegrationsRunner } from "./Integrations.ts";
+import type { IntegrationRequest } from "./Integrations";
 
 export interface ChatOptions {
     provider: string;
     model: string;
+    callerProvider: string;
+    callerModel: string;
     conversationId: string;
 }
 
-export type ChatRole = "user" | "assistant" | "system" | "tool";
+export enum ChatRole {
+    User = "user",
+    Assistant = "assistant",
+    System = "system",
+    Tool = "tool",
+}
 
 export interface HistoryMessage {
-    role: "user" | "assistant" | "system" | "tool";
+    role: ChatRole;
     id: string;
     timestamp: string;
     content: string;
-    user: {
+    user?: {
         id: string;
         name: string;
-        displayName: string | null;
+        displayName: string | null | undefined;
         pronouns: string;
+    },
+    tools?: IntegrationRequest[];
+    toolCalled?: {
+        id: string;
+        name: string;
+        args?: Record<string, any>;
     }
+}
+
+export type ChatMessage = SystemMessage | HumanMessage | AIMessage | ToolMessage | FunctionMessage | RemoveMessage;
+
+export interface SendChatMessageOptions {
+    messages: HistoryMessage | HistoryMessage[];
+    attachments?: any[];
 }
 
 export class History {
@@ -51,7 +74,15 @@ export class History {
 
         return query.map((v) => {
             const _d: HistoryMessage = JSON.parse(this._decoder.decode(v)) || {};
-            const role: ChatRole = _d.role || "user";
+
+            const enumMappings = {
+                "user": ChatRole.User,
+                "assistant": ChatRole.Assistant,
+                "system": ChatRole.System,
+                "tool": ChatRole.Tool,
+            }
+
+            const role: ChatRole = enumMappings[_d.role] ?? ChatRole.User;
 
             return {
                 role,
@@ -59,13 +90,13 @@ export class History {
                 timestamp: _d.timestamp || new Date().toISOString(),
                 content: _d.content || "[empty]",
                 user: {
-                    id: _d.user?.id || "0",
-                    name: _d.user?.name || "unknown",
+                    id: _d.user?.id ?? "0",
+                    name: _d.user?.name ?? "unknown",
                     displayName: _d.user?.displayName ?? _d.user?.name,
-                    pronouns: _d.user?.pronouns || "unknown",
+                    pronouns: _d.user?.pronouns ?? "unknown",
                 }
             }
-        });
+        }).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     }
 
     async getAll(): Promise<HistoryMessage[]> {
@@ -73,10 +104,21 @@ export class History {
 
         const keys: string[] = [];
         for await (const key of keyGenerator) {
-            keys.push(key);
+            keys.push(key.replace(`${this.conversationId}:`, ""));
         }
 
         return await this.get(keys || []);
+    }
+
+    async allKeys(): Promise<string[]> {
+        const keyGenerator = this._store.yieldKeys(`${this.conversationId}:`);
+
+        const keys: string[] = [];
+        for await (const key of keyGenerator) {
+            keys.push(key.replace(`${this.conversationId}:`, ""));
+        }
+
+        return keys;
     }
 
     async add(data: HistoryMessage | HistoryMessage[]) {
@@ -98,22 +140,127 @@ export class History {
             return query;
         }
     }
+
+    transform(data: HistoryMessage[]) {
+        return data.map((v) => {
+            if (v.role === "user") {
+                return new HumanMessage(v.content);
+            } else if (v.role === "system") {
+                return new SystemMessage(v.content);
+            } else if (v.role === "tool") {
+                return new ToolMessage({
+                    tool_call_id: v.id,
+                    content: v.content,
+                    name: v.toolCalled?.name,
+                    additional_kwargs: v.toolCalled?.args
+                });
+            } else {
+                return new AIMessage({
+                    content: v.content,
+                    tool_calls: v.tools as any
+                });
+            }
+        });
+    };
 }
 
 export class Chat {
     protected _provider: string;
     protected _model: string;
+    protected _callerProvider: string;
+    protected _callerModel: string;
     conversationId: string;
     langChainAccessor: ChatOpenAI | ChatOllama;
+    history: History;
+    integrations: IntegrationsRunner;
 
-    constructor({ provider, model, conversationId }: ChatOptions) {
-        this._provider = process.env.LANGCHAIN_PROVIDER ?? "openai";
-        this._model = process.env.LANGCHAIN_MODEL ?? "gpt-4o-mini";
+    constructor({ provider, model, callerProvider, callerModel, conversationId }: ChatOptions) {
+        this._provider = provider ?? process.env.LANGCHAIN_PROVIDER ?? "openai";
+        this._model = model ?? process.env.LANGCHAIN_MODEL ?? "gpt-4o-mini";
+        this._callerProvider = callerProvider ?? process.env.LANGCHAIN_CALLER_PROVIDER ?? "openai";
+        this._callerModel = callerModel ?? process.env.LANGCHAIN_CALLER_MODEL ?? "gpt-4o-mini";
         this.conversationId = conversationId;
         this.langChainAccessor = providers[this._provider].generator(this._model);
+        this.history = new History(IORedis, conversationId);
+        this.integrations = new IntegrationsRunner(IORedis, this, this._callerProvider, this._callerModel);
     }
 
-    async singleCall({ message, attachments }: { message: string, attachments: any[] }) {
-        const chatCompletion = await this.langChainAccessor;
+    private async _invoke(messages: HistoryMessage[]): Promise<AIMessageChunk> {
+        const ctx: ChatMessage[] = this.history.transform(messages);
+        const lastMsg: HistoryMessage = messages[messages.length - 1];
+
+        const chatCompletion: AIMessageChunk = await this.langChainAccessor.bind({
+            tools: config.integrations as any
+        }).invoke(ctx);
+
+        await this.history.add([
+            {
+                id: (messages?.[messages.length - 1]?.id ? messages[messages.length - 1].id + "ASSISTANT" : `UNKNOWN:${nanoid()}`),
+                timestamp: new Date().toISOString(),
+                role: ChatRole.Assistant,
+                content: chatCompletion.content as string,
+                user: {
+                    id: lastMsg?.user?.id ?? `UNKNOWN:${nanoid()}`,
+                    name: lastMsg?.user?.name ?? "Unknown",
+                    displayName: lastMsg?.user?.displayName ?? lastMsg?.user?.name,
+                    pronouns: lastMsg?.user?.pronouns ?? "Unknown",
+                }
+            }
+        ]);
+
+        return chatCompletion;
+    }
+
+    async send({ messages, attachments }: SendChatMessageOptions) {
+        const history = await this.history.getAll();
+
+        const untransformedCtx: HistoryMessage[] = [
+            ...history,
+            ...(Array.isArray(messages) ? messages : [messages]),
+        ];
+
+        await this.history.add(messages);
+
+        const { tasks: toCall, chatCompletion } = await this.integrations.invoke(untransformedCtx);
+        if (toCall?.length) {
+            const tasks = await this.integrations.run(toCall);
+            const taskMessages = tasks.map((v) => {
+                return {
+                    role: ChatRole.Tool,
+                    id: v.integration.id,
+                    timestamp: v.timestamp,
+                    content: v.content,
+                    toolCalled: {
+                        id: v.integration.id,
+                        name: v.integration.name,
+                        args: v.integration.passedArguments
+                    }
+                };
+            });
+
+            const completedCtx = await this._invoke([
+                ...untransformedCtx,
+                {
+                    role: ChatRole.Assistant,
+                    id: nanoid(),
+                    timestamp: new Date().toISOString(),
+                    content: chatCompletion.content as string,
+                    tools: tasks.map((v) => ({
+                        id: v.integration.id,
+                        type: "tool_call",
+                        name: v.integration.name,
+                        args: v.integration.passedArguments,
+                    }))
+                },
+                ...taskMessages
+            ]);
+
+            return {
+                ...completedCtx,
+                taskResults: tasks
+            };
+        } else {
+            return chatCompletion;
+        }
     }
 }

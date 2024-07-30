@@ -1,10 +1,16 @@
 import { Elysia } from 'elysia'
 import { autoroutes } from 'elysia-autoroutes'
 import { IORedis } from './lib/globals';
+import { logger } from "@bogeychan/elysia-logger";
 
-await IORedis;
+await IORedis.connect().catch(() => { });
 
 const app = new Elysia()
+    .use(
+        logger({
+            level: "error",
+        })
+    )
     .use(
         autoroutes({
             routesDir: "./routes", // -> optional, defaults to './routes'
