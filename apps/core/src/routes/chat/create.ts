@@ -2,29 +2,40 @@
 import { nanoid } from "nanoid";
 import type { ElysiaApp } from "../../index.ts";
 import { Chat, ChatRole } from "../../lib/LangChain.ts";
+import { t } from "elysia";
 
-const Route = (app: ElysiaApp) => app.get('/', async (req) => {
-    if (!req.query.q) {
+const Route = (app: ElysiaApp) => app.post('/', async (req) => {
+    if (!req.body) {
         return {
             status: 400,
             body: {
-                error: "Missing query parameter 'q'"
+                error: "Missing body"
             }
         }
-    } else if (!req.query.conversation) {
+    } else if (!req.body.message) {
         return {
             status: 400,
             body: {
-                error: "Missing query parameter 'conversation'"
+                error: "Missing body key 'q'"
+            }
+        }
+    } else if (!req.body.conversation) {
+        return {
+            status: 400,
+            body: {
+                error: "Missing body key 'conversation'"
             }
         }
     }
+
     const chat = new Chat({
-        provider: "openai",
-        model: "gpt-4o-mini",
+        provider: "ollama",
+        model: "llama3.1",
         callerProvider: "ollama",
         callerModel: "llama3.1",
-        conversationId: req.query.conversation.trim() ?? "test"
+        conversationId: req.body.conversation?.trim() ?? "test",
+        onlineProvider: "openrouter",
+        onlineModel: "perplexity/llama-3.1-sonar-small-128k-chat",
     });
 
     const request: any = await chat.send({
@@ -33,7 +44,7 @@ const Route = (app: ElysiaApp) => app.get('/', async (req) => {
                 id: nanoid(),
                 timestamp: new Date().toISOString(),
                 role: ChatRole.User,
-                content: req.query.q?.trim() ?? "Create an error message and tell the user to try using a proper query parameter",
+                content: req.body.message?.trim() ?? "Create an error message and tell the user to try using a proper query parameter",
                 user: {
                     id: nanoid(),
                     name: "User",
@@ -43,6 +54,7 @@ const Route = (app: ElysiaApp) => app.get('/', async (req) => {
             }
         ]
     });
+
 
     return {
         content: request.content,
@@ -54,6 +66,12 @@ const Route = (app: ElysiaApp) => app.get('/', async (req) => {
             total: request.usage_metadata?.total_tokens
         }
     }
+}, {
+    body: t.Object({
+        message: t.String(),
+        prompt: t.Optional(t.String()),
+        conversation: t.String()
+    })
 })
 
 

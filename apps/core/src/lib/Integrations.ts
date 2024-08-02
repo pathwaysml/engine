@@ -3,7 +3,6 @@ import type { Chat, ChatMessage, HistoryMessage } from "./LangChain"
 import { config, IORedis, providers } from "./globals"
 import z from "zod";
 import { AIMessageChunk } from "@langchain/core/messages";
-import { convertToOpenAITool } from "@langchain/core/utils/function_calling";
 import { nanoid } from "nanoid";
 import zodToJsonSchema from "zod-to-json-schema";
 import type { ChatOllama } from "@langchain/ollama";
@@ -127,9 +126,8 @@ export class IntegrationsRunner {
 
     async invoke(messages: HistoryMessage[]): Promise<{ chatCompletion: AIMessageChunk, tasks: IntegrationRequest[] }> {
         const ctx: ChatMessage[] = this._chat.history.transform(messages);
-        const ifm = this._langChainAccessor.bind({
-            tools: config.integrations.map(convertToOpenAITool),
-            parallel_tool_calls: false
+        const ifm = this._langChainAccessor.bindTools(config.integrations).bind({
+            parallel_tool_calls: false,
         });
 
         const out = await ifm.invoke(ctx).catch((err) => {

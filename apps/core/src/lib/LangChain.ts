@@ -14,6 +14,8 @@ export interface ChatOptions {
     callerProvider: string;
     callerModel: string;
     conversationId: string;
+    onlineProvider?: string;
+    onlineModel?: string;
 }
 
 export enum ChatRole {
@@ -153,7 +155,7 @@ export class History {
                     content: v.content,
                     name: v.toolCalled?.name,
                     additional_kwargs: v.toolCalled?.args
-                });
+                })
             } else {
                 return new AIMessage({
                     content: v.content,
@@ -169,28 +171,34 @@ export class Chat {
     protected _model: string;
     protected _callerProvider: string;
     protected _callerModel: string;
+    protected _onlineProvider: string;
+    protected _onlineModel: string;
     conversationId: string;
     langChainAccessor: ChatOpenAI | ChatOllama;
+    onlineLangChainAccessor: ChatOpenAI | ChatOllama;
     history: History;
     integrations: IntegrationsRunner;
 
-    constructor({ provider, model, callerProvider, callerModel, conversationId }: ChatOptions) {
+    constructor({ provider, model, callerProvider, callerModel, onlineProvider, onlineModel, conversationId }: ChatOptions) {
         this._provider = provider ?? process.env.LANGCHAIN_PROVIDER ?? "openai";
         this._model = model ?? process.env.LANGCHAIN_MODEL ?? "gpt-4o-mini";
         this._callerProvider = callerProvider ?? process.env.LANGCHAIN_CALLER_PROVIDER ?? "openai";
         this._callerModel = callerModel ?? process.env.LANGCHAIN_CALLER_MODEL ?? "gpt-4o-mini";
+        this._onlineProvider = onlineProvider ?? process.env.LANGCHAIN_ONLINE_CALLER_PROVIDER ?? "openai";
+        this._onlineModel = onlineModel ?? process.env.LANGCHAIN_ONLINE_CALLER_MODEL ?? "gpt-4o-mini";
         this.conversationId = conversationId;
         this.langChainAccessor = providers[this._provider].generator(this._model);
+        this.onlineLangChainAccessor = (onlineProvider && onlineModel) ? providers[this._onlineProvider].generator(this._onlineModel) : this.langChainAccessor;
         this.history = new History(IORedis, conversationId);
         this.integrations = new IntegrationsRunner(IORedis, this, this._callerProvider, this._callerModel);
     }
 
-    private async _invoke(messages: HistoryMessage[]): Promise<AIMessageChunk> {
+    private async _invoke(accessor: ChatOpenAI | ChatOllama, messages: HistoryMessage[], tools: boolean = false): Promise<AIMessageChunk> {
         const ctx: ChatMessage[] = this.history.transform(messages);
         const lastMsg: HistoryMessage = messages[messages.length - 1];
 
-        const chatCompletion: AIMessageChunk = await this.langChainAccessor.bind({
-            tools: config.integrations as any
+        const chatCompletion: AIMessageChunk = await accessor.bind({
+            //tools: tools ? config.integrations as any : undefined
         }).invoke(ctx);
 
         await this.history.add([
@@ -238,7 +246,7 @@ export class Chat {
                 };
             });
 
-            const completedCtx = await this._invoke([
+            const completedCtx = await this._invoke(this.onlineLangChainAccessor, [
                 ...untransformedCtx,
                 {
                     role: ChatRole.Assistant,
@@ -253,14 +261,15 @@ export class Chat {
                     }))
                 },
                 ...taskMessages
-            ]);
+            ], true);
 
             return {
                 ...completedCtx,
                 taskResults: tasks
             };
         } else {
-            return chatCompletion;
+            const regular: AIMessageChunk = await this._invoke(this.langChainAccessor, untransformedCtx, false);
+            return regular;
         }
     }
 }

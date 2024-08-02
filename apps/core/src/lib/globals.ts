@@ -77,11 +77,11 @@ const generateRedisClient = async () => {
     });
 
     IORedis.on("connect", () => {
-        console.log(chalk.bold(`${chalk.green("✔")} Connected to IORedis (History client)`))
+        console.log(chalk.bold(`${chalk.green("✔ ")} Connected to IORedis (History client)`))
     });
 
     IORedis.on("error", (err) => {
-        console.error(chalk.bold(`${chalk.red("✖")} An error occurred while connecting to Redis`));
+        console.error(chalk.bold(`${chalk.red("✖ ")} An error occurred while connecting to Redis`));
         throw err;
     });
 
@@ -103,25 +103,50 @@ export const generateGlobalConfig = async () => {
     // attempt import of .ts first
     try {
         const configModule = await import(configFile);
-        console.log(chalk.bold(`${chalk.green("✔")} Loaded ${chalk.blue("pwse.config.ts")}`));
+        console.log(chalk.bold(`${chalk.green("✔ ")} Loaded ${chalk.blue("pwse.config.ts")}`));
         return configModule.default as Configuration;
     } catch (err) {
         // if import fails, attempt import of .js
         try {
             const configModule = await import(configFile.replace(".ts", ".js"));
-            console.log(chalk.bold(`${chalk.green("✔")} Loaded ${chalk.yellow("pwse.config.js")}`));
+            console.log(chalk.bold(`${chalk.green("✔ ")} Loaded ${chalk.yellow("pwse.config.js")}`));
             return configModule.default as Configuration;
         } catch (err) {
             // if import fails, throw error
-            throw new Error(dedent`An error occurred during the configuration load.
-        No configuration file was found in the apex directory, ${chalk.blue(configDir)}.
-        Please create one of the following files in this directory:
-        ${chalk.blue("pwse.config.ts")} in TypeScript
-        ${chalk.yellow("pwse.config.js")} in JavaScript
-            `);
+            const details = dedent`
+            ${chalk.blue("? ")} No configuration file was found in the apex directory, ${chalk.blue(configDir)}.
+            ${chalk.green("✔ ")} Please create one of the following files in this directory:
+            ${chalk.bold.blue("   T")} ${chalk.blue("pwse.config.ts")}
+            ${chalk.bold.yellow("   J")} ${chalk.yellow("pwse.config.js")}
+            `;
+
+            console.log("=====")
+            console.error(dedent`${chalk.yellow("✖ ")} ${chalk.bold("An error occurred during the configuration load: No configuration file found")}
+            ${chalk.reset(details)}`);
+
+            process.exit(1);
         }
     }
 }
 
+export const configurationChecks = () => {
+    if (!process.env.OLLAMA_BASE_URL && process.env.DANGEROUS_DISABLE_LLAMA_GUARD !== "true") {
+        const details = dedent`
+        ${chalk.blue("? ")} Pathways Engine uses Ollama in order to moderate inputs and outputs within Chat and Text Completion.
+        ${chalk.green("✔ ")} ${chalk.bold("FIX")}: Set OLLAMA_BASE_URL to the URL of your Ollama instance in your environment.
+        ${chalk.yellow("‼ ")} ${chalk.bold("UNRECOMMENDED")}: Alternatively, you can disable this check by setting DANGEROUS_DISABLE_LLAMA_GUARD=true. This is not recommended.
+        `;
+
+        console.log("=====")
+        console.error(dedent`${chalk.yellow("✖ ")} ${chalk.bold("An error occurred during the configuration load: OLLAMA_BASE_URL is not set")}
+        ${chalk.reset(details)}`);
+
+        process.exit(1);
+    }
+
+    return true;
+}
+
+export const configValid = configurationChecks();
 export const IORedis = await generateRedisClient();
 export const config = await generateGlobalConfig();
