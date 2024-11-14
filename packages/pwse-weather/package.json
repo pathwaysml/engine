@@ -1,0 +1,14 @@
+{
+    "name": "pwse-weather",
+    "module": "index.js",
+    "type": "module",
+    "exports": {
+        ".": "./index.js"
+    },
+    "devDependencies": {
+        "@types/bun": "latest"
+    },
+    "peerDependencies": {
+        "typescript": "^5.0.0"
+    }
+}
