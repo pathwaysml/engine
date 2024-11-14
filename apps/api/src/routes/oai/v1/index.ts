@@ -1,5 +1,5 @@
-import type { ElysiaApp } from "../../index.ts";
-import { SupportedCalls, type APIMetadataResponse, type APIVersion } from "../../types/global.ts";
+import type { ElysiaApp } from "../../../index.ts";
+import { SupportedCalls, type APIMetadataResponse, type APIVersion } from "../../../types/global.ts";
 
 export const Metadata: APIVersion = {
     identifier: "v1",

@@ -1,7 +1,7 @@
 
 import { nanoid } from "nanoid";
-import type { ElysiaApp } from "../../index.ts";
-import { Chat, ChatRole } from "../../lib/LangChain.ts";
+import type { ElysiaApp } from "../../../index.ts";
+import { Chat, ChatRole } from "../../../lib/LangChain.ts";
 import { t } from "elysia";
 
 const Route = (app: ElysiaApp) => app.post('/', async (req) => {
@@ -30,12 +30,12 @@ const Route = (app: ElysiaApp) => app.post('/', async (req) => {
 
     const chat = new Chat({
         provider: "ollama",
-        model: "llama3.1",
+        model: "llama3.2-vision:11b",
         callerProvider: "ollama",
-        callerModel: "llama3.1",
+        callerModel: "llama3.2:3b",
         conversationId: req.body.conversation?.trim() ?? "test",
         onlineProvider: "openrouter",
-        onlineModel: "perplexity/llama-3.1-sonar-small-128k-chat",
+        onlineModel: "anthropic/claude-3-haiku",
     });
 
     const request: any = await chat.send({

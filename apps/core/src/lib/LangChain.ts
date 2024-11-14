@@ -7,6 +7,7 @@ import { HumanMessage, AIMessage, FunctionMessage, RemoveMessage, SystemMessage,
 import { nanoid } from "nanoid";
 import { IntegrationsRunner } from "./Integrations.ts";
 import type { IntegrationRequest } from "./Integrations";
+import { z } from "zod";
 
 export interface ChatOptions {
     provider: string;
@@ -164,6 +165,12 @@ export class History {
             }
         });
     };
+
+    async clear(): Promise<void> {
+        const keys = await this.allKeys();
+        const toDelete = keys.map((v) => `${this.conversationId}:${v}`);
+        void await this._store.mdelete(toDelete);
+    }
 }
 
 export class Chat {
@@ -196,10 +203,9 @@ export class Chat {
     private async _invoke(accessor: ChatOpenAI | ChatOllama, messages: HistoryMessage[], tools: boolean = false): Promise<AIMessageChunk> {
         const ctx: ChatMessage[] = this.history.transform(messages);
         const lastMsg: HistoryMessage = messages[messages.length - 1];
-
         const chatCompletion: AIMessageChunk = await accessor.bind({
-            //tools: tools ? config.integrations as any : undefined
-        }).invoke(ctx);
+            tools: tools ? config.integrations as any : undefined
+        }).invoke(tools ? [new SystemMessage("Process the user's integration accurately. If the integration is incorrect or you cannot fulfill the query, apologize to the user and state: 'I'm sorry, I couldn't find what you were looking for.' Do not attempt any action beyond the scope of the provided integration. Follow this instruction strictly."), ...ctx] : ctx);
 
         await this.history.add([
             {
